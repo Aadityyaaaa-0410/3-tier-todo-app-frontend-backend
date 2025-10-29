@@ -1,0 +1,35 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Deploy via SSM with PM2 zero-downtime
+        run: |
+          # Get all instance IDs with tag Name=backend-b-b
+          INSTANCE_IDS=$(aws ssm describe-instance-information \
+            --filters "Key=tag:Name,Values=backend-b-b" \
+            --query "InstanceInformationList[].InstanceId" \
+            --output text)
+
+          for ID in $INSTANCE_IDS; do
+            echo "Deploying to instance: $ID"
+            aws ssm send-command \
+              --instance-ids "$ID" \
+              --document-name "AWS-RunShellScript" \
+              --parameters 'commands=[
+                "cd ./3-tier-todo-app-frontend-backend",
+                "git pull origin master",
+                "npm install",
+                "pm2 describe server > /dev/null 2>&1 && pm2 reload app || pm2 start app.js --name server",
+                "pm2 save"
+              ]'
+          done
