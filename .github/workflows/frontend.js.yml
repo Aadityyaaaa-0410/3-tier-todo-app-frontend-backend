@@ -9,25 +9,33 @@ on:
 
 jobs:
   deploy:
-    runs-on: self-hosted   # Using your Self-Hosted Runner with S3 access
+    runs-on: self-hosted   # You can keep self-hosted OR switch to GitHub runner
+
+    permissions:
+      id-token: write      # ✅ Required for OIDC
+      contents: read
 
     defaults:
       run:
-        working-directory: ./frontend   # Set working directory to frontend
+        working-directory: ./frontend
 
     steps:
-      # Step 1: Checkout repository
       - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      # Step 2: Install dependencies and build
+      # ✅ Configure AWS Creds using OIDC
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::533267349233:role/github-oidc
+          role-session-name: github-actions
+          aws-region: ap-south-1
+
       - name: Install and build
         run: |
           npm ci
           npm run build
 
-      # Step 3: Upload build folder to S3
-      # (Self-hosted runner already has IAM permissions, so no AWS credentials step needed)
       - name: Upload build to S3
         run: |
           aws s3 sync dist/ s3://${{ secrets.S3_BUCKET_NAME }} --delete
