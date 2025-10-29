@@ -5,7 +5,7 @@ import TodoList from "./components/TodoList";
 function App() {
   const [todos, setTodos] = useState([]);
   const [loading, setLoading] = useState(false);
-  const API_BASE = "https://app-alb-270296790.us-east-1.elb.amazonaws.com";
+  const API_BASE = "http://app-alb-270296790.us-east-1.elb.amazonaws.com";
  // const API_BASE = import.meta.env.VITE_API_BASE_URL;
 
   // ✅ Fetch all todos
