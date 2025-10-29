@@ -1,0 +1,33 @@
+name: Deploy React App to S3
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'frontend/**'     # Trigger only if frontend folder changes
+
+jobs:
+  deploy:
+    runs-on: self-hosted   # Using your Self-Hosted Runner with S3 access
+
+    defaults:
+      run:
+        working-directory: ./frontend   # Set working directory to frontend
+
+    steps:
+      # Step 1: Checkout repository
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Step 2: Install dependencies and build
+      - name: Install and build
+        run: |
+          npm ci
+          npm run build
+
+      # Step 3: Upload build folder to S3
+      # (Self-hosted runner already has IAM permissions, so no AWS credentials step needed)
+      - name: Upload build to S3
+        run: |
+          aws s3 sync dist/ s3://${{ secrets.S3_BUCKET_NAME }} --delete
