@@ -16,7 +16,7 @@ jobs:
 
       - name: Deploy via SSM with PM2 zero-downtime
         run: |
-          # Get all instance IDs with tag Name=backend-b-b
+          # Get all instance IDs with tag Name=blue
           INSTANCE_IDS=$(aws ssm describe-instance-information \
             --filters "Key=tag:Name,Values=blue" \
             --query "InstanceInformationList[].InstanceId" \
