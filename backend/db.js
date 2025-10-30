@@ -1,9 +1,9 @@
 const mysql = require('mysql2/promise');
 
 const pool = mysql.createPool({
-    host: process.env.DB_HOST || 'your-rds-endpoint.rds.amazonaws.com',
+    host: process.env.DB_HOST || 'database-1.ck9am2wiwh3j.us-east-1.rds.amazonaws.com',
     user: process.env.DB_USER || 'admin',
-    password: process.env.DB_PASSWORD || 'yourpassword',
+    password: process.env.DB_PASSWORD || 'hello123',
     database: process.env.DB_NAME || 'todos_db',
     waitForConnections: true,
     connectionLimit: 10,
