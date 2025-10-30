@@ -18,7 +18,7 @@ jobs:
         run: |
           # Get all instance IDs with tag Name=backend-b-b
           INSTANCE_IDS=$(aws ssm describe-instance-information \
-            --filters "Key=tag:Name,Values=backend-b-b" \
+            --filters "Key=tag:Name,Values=blue" \
             --query "InstanceInformationList[].InstanceId" \
             --output text)
 
