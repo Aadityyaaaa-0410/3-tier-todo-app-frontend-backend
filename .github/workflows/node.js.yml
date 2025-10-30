@@ -28,7 +28,7 @@ jobs:
               --instance-ids "$ID" \
               --document-name "AWS-RunShellScript" \
               --parameters 'commands=[
-                "cd ./3-tier-todo-app-frontend-backend",
+                "cd /home/ubuntu/3-tier-todo-app-frontend-backend",
                 "git pull origin master",
                 "npm install",
                 "pm2 describe server > /dev/null 2>&1 && pm2 reload app || pm2 start app.js --name server",
