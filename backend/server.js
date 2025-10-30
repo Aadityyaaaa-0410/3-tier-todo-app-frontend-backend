@@ -2,8 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
-// const db = require('./db');
-//helo
+const db = require('./db');
+//heloo
 const app = express();
 app.use(bodyParser.json());
 app.use(cors()); // Enable CORS for frontend calls
