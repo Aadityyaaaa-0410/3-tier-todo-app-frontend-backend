@@ -51,23 +51,31 @@ function App() {
 
   // ✅ Delete todo
   const deleteTodo = async (id) => {
-    console.log("Attempting to delete todo with id:", id);
-    try {
-      const res = await fetch(`${API_BASE}/delete-todo-a/${id}`, {
-        method: "DELETE",
-      });
-      console.log("Delete response status:", res.status);
-      if (res.ok) {
-        // Refresh the list after delete
-        fetchTodos();
-      } else {
+  console.log("Attempting to delete todo with id:", id);
+  try {
+    const res = await fetch(`${API_BASE}/delete-todo-a/${id}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" }
+    });
+
+    console.log("Delete response status:", res.status);
+
+    if (res.ok) {
+      fetchTodos(); // Refresh list
+    } else {
+      let msg = "Delete failed";
+      try {
         const errorData = await res.json();
-        console.error("Error deleting todo:", errorData);
+        msg = errorData.error || msg;
+      } catch {
+        console.error("Non-JSON response received from API Gateway");
       }
-    } catch (err) {
-      console.error("Error deleting todo:", err);
+      console.error("Error deleting todo:", msg);
     }
-  };
+  } catch (err) {
+    console.error("Error deleting todo:", err);
+  }
+};
 
   return (
     <div className="w-screen h-screen bg-gradient-to-br from-indigo-400 to-purple-500 flex justify-center items-center">
