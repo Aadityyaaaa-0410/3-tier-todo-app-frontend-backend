@@ -8,7 +8,7 @@ const app = express();
 app.use(bodyParser.json());
 app.use(cors()); // Enable CORS for frontend calls
 
-// Health check
+// Health chec
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK' });
 });
