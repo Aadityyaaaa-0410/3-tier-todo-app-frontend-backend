@@ -1,4 +1,4 @@
-name: Deploy to EC2
+name: Deploy Backend to EC2 via SSM
 
 on:
   push:
@@ -10,28 +10,44 @@ on:
 jobs:
   deploy:
     runs-on: self-hosted
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Deploy via SSM with PM2 zero-downtime
+      - name: Deploy to EC2 (Blue Environment) via SSM
         run: |
-          # Get all instance IDs with tag Name=blue
+          echo "Fetching EC2 Instances with tag Name=blue..."
+
           INSTANCE_IDS=$(aws ssm describe-instance-information \
             --filters "Key=tag:Name,Values=blue" \
             --query "InstanceInformationList[].InstanceId" \
             --output text)
 
+          if [ -z "$INSTANCE_IDS" ]; then
+            echo "❌ No EC2 instances found with tag Name=blue"
+            exit 1
+          fi
+
           for ID in $INSTANCE_IDS; do
-            echo "Deploying to instance: $ID"
+            echo "🚀 Deploying to instance: $ID"
+
             aws ssm send-command \
               --instance-ids "$ID" \
               --document-name "AWS-RunShellScript" \
-              --parameters 'commands=[
-                "cd /home/ubuntu/3-tier-todo-app-frontend-backend",
-                "git pull origin master",
-                "npm install",
-                "pm2 describe server > /dev/null 2>&1 && pm2 reload app || pm2 start app.js --name server",
-                "pm2 save"
-              ]'
+              --comment "Fresh clone and restart PM2 backend server" \
+              --parameters commands='[
+                "sudo -u ubuntu bash -c '\''cd /home/ubuntu; \
+                rm -rf 3-tier-todo-app-frontend-backend; \
+                git clone https://github.com/Aadityyaaaa-0410/3-tier-todo-app-frontend-backend.git; \
+                cd 3-tier-todo-app-frontend-backend/backend; \
+                npm install; \
+                pm2 describe server > /dev/null 2>&1 && pm2 reload server || pm2 start app.js --name server; \
+                pm2 save'\''"
+              ]' \
+              --region us-east-1
+
+            echo "✅ Command sent to $ID"
           done
+
+          echo "🎉 Deployment command sent to all blue EC2 instances!"
