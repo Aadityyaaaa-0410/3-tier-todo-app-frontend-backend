@@ -9,7 +9,7 @@ app.use(cors()); // Enable CORS for frontend calls
 
 // Health check
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK' });
+  res.status(200).json({ status: 'OK' }); 
 });
 
 // Get all EC2 todos
