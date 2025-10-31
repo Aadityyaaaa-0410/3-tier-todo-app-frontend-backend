@@ -30,7 +30,7 @@ jobs:
           fi
 
           for ID in $INSTANCE_IDS; do
-            echo "🚀 Deploying to instance: $ID"
+            echo "🚀 Deploying code to instance: $ID"
 
             aws ssm send-command \
               --instance-ids "$ID" \
@@ -55,7 +55,7 @@ jobs:
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Switch ALB to Green TG + Validate Health
+      - name: Shift ALB Traffic to Green TG + Validate
         env:
           LISTENER_ARN: arn:aws:elasticloadbalancing:us-east-1:533267349233:listener/app/app-alb/875bca219355eec1/8712d71e13e00b72
           OLD_TG_ARN: arn:aws:elasticloadbalancing:us-east-1:533267349233:targetgroup/blue-tg/23a0a2721e8f7154
@@ -64,19 +64,30 @@ jobs:
         run: |
           set -e
 
-          echo "Switching 100% traffic to green-tg..."
+          echo "Shifting traffic → GREEN:100 | BLUE:0"
+
           aws elbv2 modify-listener \
             --listener-arn "$LISTENER_ARN" \
-            --default-actions '[{"Type":"forward","TargetGroupArn":"'"$NEW_TG_ARN"'"}]' > /dev/null
+            --default-actions '[
+              {
+                "Type": "forward",
+                "ForwardConfig": {
+                  "TargetGroups": [
+                    { "TargetGroupArn": "'"$NEW_TG_ARN"'", "Weight": 100 },
+                    { "TargetGroupArn": "'"$OLD_TG_ARN"'", "Weight": 0 }
+                  ]
+                }
+              }
+            ]' > /dev/null
 
-          echo "Waiting 30s for traffic to route..."
+          echo "⏳ Waiting 30s to allow traffic routing..."
           sleep 30
 
           HEALTH_URL="http://$ALB_DNS/health"
-          echo "Checking /health endpoint..."
+          echo "🔍 Checking /health endpoint..."
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL")
 
-          echo "Checking green-tg health..."
+          echo "🔍 Checking green-tg health status..."
           HEALTHY_COUNT=$(aws elbv2 describe-target-health \
             --target-group-arn "$NEW_TG_ARN" \
             --query "TargetHealthDescriptions[?TargetHealth.State=='healthy'].Target.Id" \
@@ -91,15 +102,26 @@ jobs:
             echo "  /health → $HTTP_STATUS"
             echo "  TG Health → $HEALTHY_COUNT/$TOTAL_COUNT targets healthy"
           else
-            echo "❌ VALIDATION FAILED:"
+            echo "❌ VALIDATION FAILED!"
             echo "  /health → $HTTP_STATUS"
             echo "  TG Health → $HEALTHY_COUNT/$TOTAL_COUNT healthy"
 
-            echo "♻️ ROLLING BACK to blue-tg..."
+            echo "♻️ ROLLING BACK → BLUE:100 | GREEN:0"
+
             aws elbv2 modify-listener \
               --listener-arn "$LISTENER_ARN" \
-              --default-actions '[{"Type":"forward","TargetGroupArn":"'"$OLD_TG_ARN"'"}]' > /dev/null
+              --default-actions '[
+                {
+                  "Type": "forward",
+                  "ForwardConfig": {
+                    "TargetGroups": [
+                      { "TargetGroupArn": "'"$NEW_TG_ARN"'", "Weight": 0 },
+                      { "TargetGroupArn": "'"$OLD_TG_ARN"'", "Weight": 100 }
+                    ]
+                  }
+                }
+              ]' > /dev/null
 
-            echo "Rollback: Deployment failed"
+            echo "🔁 Rollback done."
             exit 1
           fi
