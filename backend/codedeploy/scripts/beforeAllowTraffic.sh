@@ -1,2 +1,2 @@
 #!/bin/bash
-echo "BeforeAllowTraffic - Pre-traffic checks"
+echo "AfterAllowTraffic - Traffic successfully shifted"
