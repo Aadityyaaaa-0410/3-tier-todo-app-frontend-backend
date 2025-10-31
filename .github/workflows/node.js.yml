@@ -15,9 +15,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Deploy to EC2 (Blue Environment) via SSM
+      - name: Deploy to EC2 (Green Environment) via SSM
         run: |
-          echo "Fetching EC2 Instances with tag Name=blue..."
+          echo "Fetching EC2 Instances with tag Name=green..."
 
           INSTANCE_IDS=$(aws ssm describe-instance-information \
             --filters "Key=tag:Name,Values=green" \
@@ -25,7 +25,7 @@ jobs:
             --output text)
 
           if [ -z "$INSTANCE_IDS" ]; then
-            echo "❌ No EC2 instances found with tag Name=blue"
+            echo "❌ No EC2 instances found with tag Name=green"
             exit 1
           fi
 
@@ -50,9 +50,9 @@ jobs:
             echo "✅ Command sent to $ID"
           done
 
-          echo "🎉 Deployment command sent to all blue EC2 instances!"
+          echo "🎉 Deployment command sent to all GREEN EC2 instances!"
 
-     - name: Install jq
+      - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Switch ALB to Green TG + Validate Health
@@ -87,15 +87,15 @@ jobs:
             --query "length(TargetHealthDescriptions[])" --output text)
 
           if [[ "$HTTP_STATUS" -eq 200 && "$HEALTHY_COUNT" -eq "$TOTAL_COUNT" && "$TOTAL_COUNT" -gt 0 ]]; then
-            echo "SUCCESS: Deployment validated!"
+            echo "✅ SUCCESS: Deployment validated!"
             echo "  /health → $HTTP_STATUS"
             echo "  TG Health → $HEALTHY_COUNT/$TOTAL_COUNT targets healthy"
           else
-            echo "VALIDATION FAILED:"
+            echo "❌ VALIDATION FAILED:"
             echo "  /health → $HTTP_STATUS"
             echo "  TG Health → $HEALTHY_COUNT/$TOTAL_COUNT healthy"
 
-            echo "ROLLING BACK to blue-tg..."
+            echo "♻️ ROLLING BACK to blue-tg..."
             aws elbv2 modify-listener \
               --listener-arn "$LISTENER_ARN" \
               --default-actions '[{"Type":"forward","TargetGroupArn":"'"$OLD_TG_ARN"'"}]' > /dev/null
