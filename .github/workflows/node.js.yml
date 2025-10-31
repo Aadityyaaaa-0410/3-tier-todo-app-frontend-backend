@@ -61,7 +61,7 @@ jobs:
         #   OLD_TG_ARN: arn:aws:elasticloadbalancing:us-east-1:533267349233:targetgroup/blue-tg/23a0a2721e8f7154
         #   NEW_TG_ARN: arn:aws:elasticloadbalancing:us-east-1:533267349233:targetgroup/green-tg/31108f255f307107
         #   ALB_DNS: app-alb-270296790.us-east-1.elb.amazonaws.com
-         env:
+        env:
           LISTENER_ARN: ${{ secrets.LISTENER_ARN }}
           OLD_TG_ARN: ${{ secrets.OLD_TG_ARN }}
           NEW_TG_ARN: ${{ secrets.NEW_TG_ARN }}
