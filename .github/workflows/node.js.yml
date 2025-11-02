@@ -88,7 +88,7 @@ jobs:
           echo "⏳ Waiting 30s to allow traffic routing..."
           sleep 30
 
-          HEALTH_URL="http://$ALB_DNS/health"
+          HEALTH_URL="https://$ALB_DNS/health"
           echo "🔍 Checking /health endpoint..."
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL")
 
