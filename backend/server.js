@@ -2,7 +2,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const db = require('./db');
-//3:08
+//3:10blue
 const app = express();
 app.use(bodyParser.json());
 app.use(cors()); // Enable CORS for frontend calls
