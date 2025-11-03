@@ -20,7 +20,7 @@ jobs:
           echo "Fetching EC2 Instances with tag Name=green..."
 
           INSTANCE_IDS=$(aws ssm describe-instance-information \
-            --filters "Key=tag:Name,Values=green" \
+            --filters "Key=tag:Name,Values=blue" \
             --query "InstanceInformationList[].InstanceId" \
             --output text)
 
