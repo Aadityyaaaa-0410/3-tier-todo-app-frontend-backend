@@ -42,7 +42,7 @@ jobs:
                 git clone https://github.com/Aadityyaaaa-0410/3-tier-todo-app-frontend-backend.git; \
                 cd 3-tier-todo-app-frontend-backend/backend; \
                 npm install; \
-                pm2 describe server > /dev/null 2>&1 && pm2 reload server || pm2 start app.js --name server; \
+                pm2 describe server > /dev/null 2>&1 && pm2 reload server || pm2 start server.js --name server; \
                 pm2 save'\''"
               ]' \
               --region us-east-1
