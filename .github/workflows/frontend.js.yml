@@ -34,7 +34,7 @@ jobs:
       - name: Deploy to Green S3 Bucket
         run: |
           echo "🟢 Deploying new version to GREEN bucket..."
-          aws s3 sync dist/ s3://${{ secrets.S3_BUCKET_NAME_NEW }} --delete
+          aws s3 sync dist/ s3://${{ secrets.S3_BUCKET_GREEN }} --delete
           echo "✅ Deployment to GREEN bucket completed"
       
       # Switch CloudFront behavior to point to GREEN bucket
@@ -45,6 +45,12 @@ jobs:
           
           DISTRIBUTION_ID="${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}"
           GREEN_BUCKET="${{ secrets.S3_BUCKET_GREEN }}"
+          AWS_REGION="${{ secrets.AWS_REGION }}"
+          
+          # Construct proper S3 domain name
+          GREEN_DOMAIN="${GREEN_BUCKET}.s3.${AWS_REGION}.amazonaws.com"
+          
+          echo "📝 Green bucket domain: $GREEN_DOMAIN"
           
           # Get current distribution config and ETag
           aws cloudfront get-distribution-config \
@@ -52,9 +58,9 @@ jobs:
           
           ETAG=$(jq -r '.ETag' current-dist.json)
           
-          # Update origin domain to GREEN bucket
-          jq --arg bucket "$GREEN_BUCKET" \
-            '.DistributionConfig.Origins.Items[0].DomainName = ($bucket + ".s3.amazonaws.com")' \
+          # Update origin domain to GREEN bucket with proper format
+          jq --arg domain "$GREEN_DOMAIN" \
+            '.DistributionConfig.Origins.Items[0].DomainName = $domain' \
             current-dist.json | jq '.DistributionConfig' > updated-config.json
           
           # Apply the configuration change
@@ -69,10 +75,12 @@ jobs:
       - name: Invalidate CloudFront Cache
         run: |
           echo "🔄 Creating CloudFront invalidation..."
-          aws cloudfront create-invalidation \
+          INVALIDATION_ID=$(aws cloudfront create-invalidation \
             --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
-            --paths "/*"
-          echo "✅ Cache invalidation created"
+            --paths "/*" \
+            --query 'Invalidation.Id' \
+            --output text)
+          echo "✅ Cache invalidation created: $INVALIDATION_ID"
       
       # Health check on CloudFront URL
       - name: Health Check on CloudFront
@@ -116,23 +124,31 @@ jobs:
           
           DISTRIBUTION_ID="${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}"
           BLUE_BUCKET="${{ secrets.S3_BUCKET_BLUE }}"
+          AWS_REGION="${{ secrets.AWS_REGION }}"
+          
+          # Construct proper S3 domain name for BLUE bucket
+          BLUE_DOMAIN="${BLUE_BUCKET}.s3.${AWS_REGION}.amazonaws.com"
+          
+          echo "📝 Blue bucket domain: $BLUE_DOMAIN"
           
           # Get current distribution config and ETag
           aws cloudfront get-distribution-config \
-            --id $DISTRIBUTION_ID > current-dist.json
+            --id $DISTRIBUTION_ID > current-dist-rollback.json
           
-          ETAG=$(jq -r '.ETag' current-dist.json)
+          ETAG=$(jq -r '.ETag' current-dist-rollback.json)
           
-          # Revert origin back to BLUE bucket
-          jq --arg bucket "$BLUE_BUCKET" \
-            '.DistributionConfig.Origins.Items[0].DomainName = ($bucket + ".s3.amazonaws.com")' \
-            current-dist.json | jq '.DistributionConfig' > rollback-config.json
+          # Revert origin back to BLUE bucket with proper format
+          jq --arg domain "$BLUE_DOMAIN" \
+            '.DistributionConfig.Origins.Items[0].DomainName = $domain' \
+            current-dist-rollback.json | jq '.DistributionConfig' > rollback-config.json
           
           # Apply rollback
           aws cloudfront update-distribution \
             --id $DISTRIBUTION_ID \
             --distribution-config file://rollback-config.json \
             --if-match $ETAG
+          
+          echo "🔄 Creating invalidation for rollback..."
           
           # Invalidate cache to ensure old version is served
           aws cloudfront create-invalidation \
@@ -149,3 +165,4 @@ jobs:
         run: |
           echo "🎉 Deployment completed successfully!"
           echo "✅ GREEN bucket is now serving production traffic"
+          echo "💡 Previous version still available in BLUE bucket: ${{ secrets.S3_BUCKET_BLUE }}"
