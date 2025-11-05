@@ -87,33 +87,110 @@ jobs:
           aws s3 sync dist/ s3://${GREEN_BUCKET} --delete
           echo "✅ Deployment to GREEN bucket completed"
       
+      # Get current CloudFront configuration
+      - name: Analyze CloudFront Configuration
+        id: analyze_config
+        run: |
+          echo "🔍 Analyzing CloudFront configuration..."
+          
+          DISTRIBUTION_ID="${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}"
+          
+          # Get current distribution config
+          aws cloudfront get-distribution-config \
+            --id $DISTRIBUTION_ID > current-dist.json
+          
+          # Check current origins
+          echo "📋 Current Origins:"
+          jq -r '.DistributionConfig.Origins.Items[] | "  - ID: \(.Id), Domain: \(.DomainName)"' current-dist.json
+          
+          # Check default cache behavior
+          echo "📋 Default Behavior Target:"
+          CURRENT_TARGET=$(jq -r '.DistributionConfig.DefaultCacheBehavior.TargetOriginId' current-dist.json)
+          echo "  - Target Origin ID: $CURRENT_TARGET"
+          
+          # Save for next steps
+          echo "current_target=$CURRENT_TARGET" >> $GITHUB_OUTPUT
+      
       # Switch CloudFront behavior to point to GREEN bucket
       - name: Switch CloudFront to Green Bucket
         id: switch_to_green
         run: |
-          echo "🔄 Switching CloudFront origin to GREEN bucket..."
+          echo "🔄 Switching CloudFront to GREEN bucket..."
           
           DISTRIBUTION_ID="${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}"
           GREEN_BUCKET="${{ secrets.S3_BUCKET_NAME_NEW }}"
+          BLUE_BUCKET="${{ secrets.S3_BUCKET_NAME }}"
           AWS_REGION="${{ secrets.AWS_REGION }}"
           
-          # Construct proper S3 domain name
+          # Construct proper S3 domain names
           GREEN_DOMAIN="${GREEN_BUCKET}.s3.${AWS_REGION}.amazonaws.com"
+          BLUE_DOMAIN="${BLUE_BUCKET}.s3.${AWS_REGION}.amazonaws.com"
           
           echo "📝 Green bucket domain: $GREEN_DOMAIN"
+          echo "📝 Blue bucket domain: $BLUE_DOMAIN"
           
           # Get current distribution config and ETag
           aws cloudfront get-distribution-config \
             --id $DISTRIBUTION_ID > current-dist.json
           
           ETAG=$(jq -r '.ETag' current-dist.json)
-          
           echo "📋 Current ETag: $ETAG"
           
-          # Update origin domain to GREEN bucket with proper format
-          jq --arg domain "$GREEN_DOMAIN" \
-            '.DistributionConfig.Origins.Items[0].DomainName = $domain' \
-            current-dist.json | jq '.DistributionConfig' > updated-config.json
+          # Check if we have separate origins or single origin
+          ORIGIN_COUNT=$(jq '.DistributionConfig.Origins.Quantity' current-dist.json)
+          echo "📊 Number of origins: $ORIGIN_COUNT"
+          
+          if [ "$ORIGIN_COUNT" -eq 1 ]; then
+            echo "🔧 Single origin setup - updating origin domain name"
+            
+            # Update the single origin's domain to GREEN bucket
+            jq --arg domain "$GREEN_DOMAIN" \
+              '.DistributionConfig.Origins.Items[0].DomainName = $domain' \
+              current-dist.json | jq '.DistributionConfig' > updated-config.json
+            
+          else
+            echo "🔧 Multiple origin setup - switching behavior target"
+            
+            # Find GREEN and BLUE origin IDs
+            GREEN_ORIGIN_ID=$(jq -r --arg domain "$GREEN_DOMAIN" \
+              '.DistributionConfig.Origins.Items[] | select(.DomainName == $domain) | .Id' \
+              current-dist.json)
+            
+            BLUE_ORIGIN_ID=$(jq -r --arg domain "$BLUE_DOMAIN" \
+              '.DistributionConfig.Origins.Items[] | select(.DomainName == $domain) | .Id' \
+              current-dist.json)
+            
+            if [ -z "$GREEN_ORIGIN_ID" ]; then
+              echo "⚠️ Green origin not found, adding it..."
+              
+              # Add GREEN origin if it doesn't exist
+              jq --arg bucket "$GREEN_BUCKET" --arg domain "$GREEN_DOMAIN" --arg region "$AWS_REGION" \
+                '.DistributionConfig.Origins.Items += [{
+                  "Id": "S3-green-origin",
+                  "DomainName": $domain,
+                  "OriginPath": "",
+                  "CustomHeaders": {"Quantity": 0},
+                  "S3OriginConfig": {
+                    "OriginAccessIdentity": ""
+                  }
+                }] | .DistributionConfig.Origins.Quantity += 1' \
+                current-dist.json > temp-config.json
+              
+              mv temp-config.json current-dist.json
+              GREEN_ORIGIN_ID="S3-green-origin"
+            fi
+            
+            echo "🎯 Green Origin ID: $GREEN_ORIGIN_ID"
+            echo "🎯 Blue Origin ID: $BLUE_ORIGIN_ID"
+            
+            # Update default cache behavior to point to GREEN origin
+            jq --arg green_id "$GREEN_ORIGIN_ID" \
+              '.DistributionConfig.DefaultCacheBehavior.TargetOriginId = $green_id' \
+              current-dist.json | jq '.DistributionConfig' > updated-config.json
+            
+            # Save BLUE origin ID for rollback
+            echo "blue_origin_id=$BLUE_ORIGIN_ID" >> $GITHUB_OUTPUT
+          fi
           
           # Apply the configuration change
           aws cloudfront update-distribution \
@@ -121,7 +198,7 @@ jobs:
             --distribution-config file://updated-config.json \
             --if-match $ETAG
           
-          echo "✅ CloudFront now pointing to GREEN bucket"
+          echo "✅ CloudFront configuration updated to use GREEN bucket"
       
       # Invalidate CloudFront cache
       - name: Invalidate CloudFront Cache
@@ -193,13 +270,39 @@ jobs:
             --id $DISTRIBUTION_ID > current-dist-rollback.json
           
           ETAG=$(jq -r '.ETag' current-dist-rollback.json)
-          
           echo "📋 Rollback ETag: $ETAG"
           
-          # Revert origin back to BLUE bucket with proper format
-          jq --arg domain "$BLUE_DOMAIN" \
-            '.DistributionConfig.Origins.Items[0].DomainName = $domain' \
-            current-dist-rollback.json | jq '.DistributionConfig' > rollback-config.json
+          # Check if we have separate origins or single origin
+          ORIGIN_COUNT=$(jq '.DistributionConfig.Origins.Quantity' current-dist-rollback.json)
+          
+          if [ "$ORIGIN_COUNT" -eq 1 ]; then
+            echo "🔧 Single origin setup - reverting origin domain name"
+            
+            # Revert the single origin's domain back to BLUE bucket
+            jq --arg domain "$BLUE_DOMAIN" \
+              '.DistributionConfig.Origins.Items[0].DomainName = $domain' \
+              current-dist-rollback.json | jq '.DistributionConfig' > rollback-config.json
+            
+          else
+            echo "🔧 Multiple origin setup - switching behavior back to BLUE"
+            
+            # Find BLUE origin ID
+            BLUE_ORIGIN_ID=$(jq -r --arg domain "$BLUE_DOMAIN" \
+              '.DistributionConfig.Origins.Items[] | select(.DomainName == $domain) | .Id' \
+              current-dist-rollback.json)
+            
+            if [ -z "$BLUE_ORIGIN_ID" ]; then
+              echo "❌ ERROR: Cannot find BLUE origin for rollback!"
+              exit 1
+            fi
+            
+            echo "🎯 Rolling back to Blue Origin ID: $BLUE_ORIGIN_ID"
+            
+            # Update default cache behavior to point back to BLUE origin
+            jq --arg blue_id "$BLUE_ORIGIN_ID" \
+              '.DistributionConfig.DefaultCacheBehavior.TargetOriginId = $blue_id' \
+              current-dist-rollback.json | jq '.DistributionConfig' > rollback-config.json
+          fi
           
           # Apply rollback
           aws cloudfront update-distribution \
