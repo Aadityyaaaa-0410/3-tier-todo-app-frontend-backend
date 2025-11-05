@@ -2,10 +2,8 @@ name: Blue-Green Deploy React App to S3
 
 on:
   push:
-    branches:
-      - master
-    paths:
-      - 'frontend/**'
+    branches: [ master ]
+    paths: [ 'frontend/**' ]
 
 jobs:
   deploy:
@@ -15,316 +13,174 @@ jobs:
     defaults:
       run:
         working-directory: ./frontend
-    
+
     steps:
+      # ------------------------------------------------------------------
+      # 1. Checkout & build
+      # ------------------------------------------------------------------
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '25'
-      
-      - name: Validate Required Secrets
-        run: |
-          echo "🔍 Validating required secrets..."
-          
-          MISSING_SECRETS=()
-          
-          if [ -z "${{ secrets.S3_BUCKET_NAME_NEW }}" ]; then
-            MISSING_SECRETS+=("S3_BUCKET_NAME_NEW")
-          fi
-          
-          if [ -z "${{ secrets.S3_BUCKET_NAME }}" ]; then
-            MISSING_SECRETS+=("S3_BUCKET_NAME")
-          fi
-          
-          if [ -z "${{ secrets.AWS_REGION }}" ]; then
-            MISSING_SECRETS+=("AWS_REGION")
-          fi
-          
-          if [ -z "${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}" ]; then
-            MISSING_SECRETS+=("CLOUDFRONT_DISTRIBUTION_ID")
-          fi
-          
-          if [ -z "${{ secrets.CLOUDFRONT_URL }}" ]; then
-            MISSING_SECRETS+=("CLOUDFRONT_URL")
-          fi
-          
-          if [ ${#MISSING_SECRETS[@]} -gt 0 ]; then
-            echo "❌ ERROR: Missing required secrets:"
-            for secret in "${MISSING_SECRETS[@]}"; do
-              echo "  - $secret"
-            done
-            echo ""
-            echo "Please add these secrets in: Settings → Secrets and variables → Actions"
-            exit 1
-          fi
-          
-          echo "✅ All required secrets are configured"
-          echo "📦 Green Bucket (NEW): ${{ secrets.S3_BUCKET_NAME_NEW }}"
-          echo "📦 Blue Bucket (OLD): ${{ secrets.S3_BUCKET_NAME }}"
-          echo "🌍 Region: ${{ secrets.AWS_REGION }}"
-          echo "☁️ CloudFront ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}"
-      
+
       - name: Install & Build
         run: |
           npm ci
           npm run build
-      
-      # Deploy to GREEN bucket (new version)
-      - name: Deploy to Green S3 Bucket
+
+      # ------------------------------------------------------------------
+      # 2. Validate secrets
+      # ------------------------------------------------------------------
+      - name: Validate Required Secrets
         run: |
-          echo "🟢 Deploying new version to GREEN bucket..."
-          GREEN_BUCKET="${{ secrets.S3_BUCKET_NAME_NEW }}"
-          
-          if [ -z "$GREEN_BUCKET" ]; then
-            echo "❌ ERROR: S3_BUCKET_NAME_NEW secret is not set!"
+          MISSING=()
+          [[ -z "${{ secrets.S3_BUCKET_NAME_NEW }}" ]] && MISSING+=("S3_BUCKET_NAME_NEW")
+          [[ -z "${{ secrets.S3_BUCKET_NAME }}" ]]    && MISSING+=("S3_BUCKET_NAME")
+          [[ -z "${{ secrets.AWS_REGION }}" ]]       && MISSING+=("AWS_REGION")
+          [[ -z "${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}" ]] && MISSING+=("CLOUDFRONT_DISTRIBUTION_ID")
+          [[ -z "${{ secrets.CLOUDFRONT_URL }}" ]]    && MISSING+=("CLOUDFRONT_URL")
+
+          if (( ${#MISSING[@]} )); then
+            echo "Missing secrets:" "${MISSING[@]}"
             exit 1
           fi
-          
-          echo "📦 Target bucket: $GREEN_BUCKET"
-          aws s3 sync dist/ s3://${GREEN_BUCKET} --delete
-          echo "✅ Deployment to GREEN bucket completed"
-      
-      # Get current CloudFront configuration
-      - name: Analyze CloudFront Configuration
-        id: analyze_config
+          echo "All required secrets are present"
+
+      # ------------------------------------------------------------------
+      # 3. Deploy to GREEN bucket
+      # ------------------------------------------------------------------
+      - name: Deploy to Green S3 Bucket
+        env:
+          GREEN_BUCKET: ${{ secrets.S3_BUCKET_NAME_NEW }}
         run: |
-          echo "🔍 Analyzing CloudFront configuration..."
-          
-          DISTRIBUTION_ID="${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}"
-          
-          # Get current distribution config
-          aws cloudfront get-distribution-config \
-            --id $DISTRIBUTION_ID > current-dist.json
-          
-          # Check current origins
-          echo "📋 Current Origins:"
-          jq -r '.DistributionConfig.Origins.Items[] | "  - ID: \(.Id), Domain: \(.DomainName)"' current-dist.json
-          
-          # Check default cache behavior
-          echo "📋 Default Behavior Target:"
-          CURRENT_TARGET=$(jq -r '.DistributionConfig.DefaultCacheBehavior.TargetOriginId' current-dist.json)
-          echo "  - Target Origin ID: $CURRENT_TARGET"
-          
-          # Save for next steps
-          echo "current_target=$CURRENT_TARGET" >> $GITHUB_OUTPUT
-      
-      # Switch CloudFront behavior to point to GREEN bucket
-      - name: Switch CloudFront to Green Bucket
-        id: switch_to_green
+          echo "Deploying to GREEN bucket: $GREEN_BUCKET"
+          aws s3 sync dist/ "s3://$GREEN_BUCKET" --delete
+
+      # ------------------------------------------------------------------
+      # 4. Determine current origin (BLUE or GREEN)
+      # ------------------------------------------------------------------
+      - name: Get current CloudFront config
+        id: cf_config
+        env:
+          DIST_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
         run: |
-          echo "🔄 Switching CloudFront to GREEN bucket..."
-          
-          DISTRIBUTION_ID="${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}"
-          GREEN_BUCKET="${{ secrets.S3_BUCKET_NAME_NEW }}"
-          BLUE_BUCKET="${{ secrets.S3_BUCKET_NAME }}"
-          AWS_REGION="${{ secrets.AWS_REGION }}"
-          
-          # Construct proper S3 domain names
-          GREEN_DOMAIN="${GREEN_BUCKET}.s3.${AWS_REGION}.amazonaws.com"
-          BLUE_DOMAIN="${BLUE_BUCKET}.s3.${AWS_REGION}.amazonaws.com"
-          
-          echo "📝 Green bucket domain: $GREEN_DOMAIN"
-          echo "📝 Blue bucket domain: $BLUE_DOMAIN"
-          
-          # Get current distribution config and ETag
-          aws cloudfront get-distribution-config \
-            --id $DISTRIBUTION_ID > current-dist.json
-          
-          ETAG=$(jq -r '.ETag' current-dist.json)
-          echo "📋 Current ETag: $ETAG"
-          
-          # Check if we have separate origins or single origin
-          ORIGIN_COUNT=$(jq '.DistributionConfig.Origins.Quantity' current-dist.json)
-          echo "📊 Number of origins: $ORIGIN_COUNT"
-          
-          if [ "$ORIGIN_COUNT" -eq 1 ]; then
-            echo "🔧 Single origin setup - updating origin domain name"
-            
-            # Update the single origin's domain to GREEN bucket
-            jq --arg domain "$GREEN_DOMAIN" \
-              '.DistributionConfig.Origins.Items[0].DomainName = $domain' \
-              current-dist.json | jq '.DistributionConfig' > updated-config.json
-            
+          aws cloudfront get-distribution-config --id "$DIST_ID" > cf.json
+          ETAG=$(jq -r .ETag cf.json)
+          CURRENT=$(jq -r .DistributionConfig.DefaultCacheBehavior.TargetOriginId cf.json)
+
+          echo "etag=$ETAG" >> $GITHUB_OUTPUT
+          echo "current_origin=$CURRENT" >> $GITHUB_OUTPUT
+
+      # ------------------------------------------------------------------
+      # 5. Switch default behaviour to the *other* origin
+      # ------------------------------------------------------------------
+      - name: Switch CloudFront to opposite origin
+        env:
+          DIST_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
+          GREEN_BUCKET: ${{ secrets.S3_BUCKET_NAME_NEW }}
+          BLUE_BUCKET: ${{ secrets.S3_BUCKET_NAME }}
+          REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          GREEN_DOMAIN="${GREEN_BUCKET}.s3.${REGION}.amazonaws.com"
+          BLUE_DOMAIN="${BLUE_BUCKET}.s3.${REGION}.amazonaws.com"
+
+          # Look-up Origin IDs (they already exist)
+          GREEN_ID=$(jq -r --arg d "$GREEN_DOMAIN" \
+            '.DistributionConfig.Origins.Items[] | select(.DomainName==$d) | .Id' cf.json)
+          BLUE_ID=$(jq -r --arg d "$BLUE_DOMAIN" \
+            '.DistributionConfig.Origins.Items[] | select(.DomainName==$d) | .Id' cf.json)
+
+          echo "Green Origin ID: $GREEN_ID"
+          echo "Blue  Origin ID: $BLUE_ID"
+
+          # Decide which one to point to
+          if [[ "${{ steps.cf_config.outputs.current_origin }}" == "$GREEN_ID" ]]; then
+            NEW_ID="$BLUE_ID"
+            echo "Currently GREEN → switching to BLUE"
           else
-            echo "🔧 Multiple origin setup - switching behavior target"
-            
-            # Find GREEN and BLUE origin IDs
-            GREEN_ORIGIN_ID=$(jq -r --arg domain "$GREEN_DOMAIN" \
-              '.DistributionConfig.Origins.Items[] | select(.DomainName == $domain) | .Id' \
-              current-dist.json)
-            
-            BLUE_ORIGIN_ID=$(jq -r --arg domain "$BLUE_DOMAIN" \
-              '.DistributionConfig.Origins.Items[] | select(.DomainName == $domain) | .Id' \
-              current-dist.json)
-            
-            if [ -z "$GREEN_ORIGIN_ID" ]; then
-              echo "⚠️ Green origin not found, adding it..."
-              
-              # Add GREEN origin if it doesn't exist
-              jq --arg bucket "$GREEN_BUCKET" --arg domain "$GREEN_DOMAIN" --arg region "$AWS_REGION" \
-                '.DistributionConfig.Origins.Items += [{
-                  "Id": "S3-green-origin",
-                  "DomainName": $domain,
-                  "OriginPath": "",
-                  "CustomHeaders": {"Quantity": 0},
-                  "S3OriginConfig": {
-                    "OriginAccessIdentity": ""
-                  }
-                }] | .DistributionConfig.Origins.Quantity += 1' \
-                current-dist.json > temp-config.json
-              
-              mv temp-config.json current-dist.json
-              GREEN_ORIGIN_ID="S3-green-origin"
-            fi
-            
-            echo "🎯 Green Origin ID: $GREEN_ORIGIN_ID"
-            echo "🎯 Blue Origin ID: $BLUE_ORIGIN_ID"
-            
-            # Update default cache behavior to point to GREEN origin
-            jq --arg green_id "$GREEN_ORIGIN_ID" \
-              '.DistributionConfig.DefaultCacheBehavior.TargetOriginId = $green_id' \
-              current-dist.json | jq '.DistributionConfig' > updated-config.json
-            
-            # Save BLUE origin ID for rollback
-            echo "blue_origin_id=$BLUE_ORIGIN_ID" >> $GITHUB_OUTPUT
+            NEW_ID="$GREEN_ID"
+            echo "Currently BLUE → switching to GREEN"
           fi
-          
-          # Apply the configuration change
+
+          # Patch the config
+          jq --arg id "$NEW_ID" \
+            '.DistributionConfig.DefaultCacheBehavior.TargetOriginId = $id' cf.json \
+            > updated.json
+
+          # Apply
           aws cloudfront update-distribution \
-            --id $DISTRIBUTION_ID \
-            --distribution-config file://updated-config.json \
-            --if-match $ETAG
-          
-          echo "✅ CloudFront configuration updated to use GREEN bucket"
-      
-      # Invalidate CloudFront cache
+            --id "$DIST_ID" \
+            --distribution-config file://updated.json \
+            --if-match "${{ steps.cf_config.outputs.etag }}"
+
+          echo "new_origin_id=$NEW_ID" >> $GITHUB_OUTPUT
+
+      # ------------------------------------------------------------------
+      # 6. Invalidate CloudFront cache
+      # ------------------------------------------------------------------
       - name: Invalidate CloudFront Cache
+        env:
+          DIST_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
         run: |
-          echo "🔄 Creating CloudFront invalidation..."
-          INVALIDATION_ID=$(aws cloudfront create-invalidation \
-            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
-            --paths "/*" \
-            --query 'Invalidation.Id' \
-            --output text)
-          echo "✅ Cache invalidation created: $INVALIDATION_ID"
-      
-      # Health check on CloudFront URL
-      - name: Health Check on CloudFront
-        id: health_check
+          ID=$(aws cloudfront create-invalidation \
+                 --distribution-id "$DIST_ID" \
+                 --paths "/*" \
+                 --query 'Invalidation.Id' --output text)
+          echo "Invalidation $ID created"
+
+      # ------------------------------------------------------------------
+      # 7. Health-check (max 5 attempts)
+      # ------------------------------------------------------------------
+      - name: Health Check
+        id: health
+        env:
+          URL: ${{ secrets.CLOUDFRONT_URL }}
         run: |
-          echo "⏳ Waiting for CloudFront to propagate changes..."
-          sleep 60
-          
-          CLOUDFRONT_URL="${{ secrets.CLOUDFRONT_URL }}"
-          echo "🔍 Performing health check on: $CLOUDFRONT_URL"
-          
-          MAX_RETRIES=5
-          RETRY_COUNT=0
-          
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            HTTP_STATUS=$(curl -o /dev/null -s -w "%{http_code}" -L "$CLOUDFRONT_URL")
-            echo "📊 Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES: Status Code: $HTTP_STATUS"
-            
-            if [ "$HTTP_STATUS" -eq 200 ]; then
-              echo "✅ Health check passed! Deployment successful."
-              echo "status=success" >> $GITHUB_OUTPUT
-              exit 0
-            fi
-            
-            RETRY_COUNT=$((RETRY_COUNT + 1))
-            if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-              echo "⏳ Retrying in 15 seconds..."
-              sleep 15
-            fi
+          for i in {1..5}; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
+            echo "Attempt $i – HTTP $CODE"
+            [[ $CODE -eq 200 ]] && { echo "status=ok" >> $GITHUB_OUTPUT; exit 0; }
+            sleep 15
           done
-          
-          echo "❌ Health check failed after $MAX_RETRIES attempts!"
           echo "status=failed" >> $GITHUB_OUTPUT
           exit 1
-      
-      # Rollback: Switch back to BLUE bucket if health check fails
-      - name: Rollback to Blue Bucket
-        if: failure()
+
+      # ------------------------------------------------------------------
+      # 8. Roll-back if health-check failed
+      # ------------------------------------------------------------------
+      - name: Rollback to previous origin
+        if: steps.health.outputs.status == 'failed'
+        env:
+          DIST_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
         run: |
-          echo "🔴 ROLLBACK: Health check failed, switching back to BLUE bucket..."
-          
-          DISTRIBUTION_ID="${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}"
-          BLUE_BUCKET="${{ secrets.S3_BUCKET_NAME }}"
-          AWS_REGION="${{ secrets.AWS_REGION }}"
-          
-          if [ -z "$BLUE_BUCKET" ]; then
-            echo "❌ ERROR: Cannot rollback - S3_BUCKET_NAME secret is not set!"
-            exit 1
-          fi
-          
-          # Construct proper S3 domain name for BLUE bucket
-          BLUE_DOMAIN="${BLUE_BUCKET}.s3.${AWS_REGION}.amazonaws.com"
-          
-          echo "📝 Blue bucket domain: $BLUE_DOMAIN"
-          
-          # Get current distribution config and ETag
-          aws cloudfront get-distribution-config \
-            --id $DISTRIBUTION_ID > current-dist-rollback.json
-          
-          ETAG=$(jq -r '.ETag' current-dist-rollback.json)
-          echo "📋 Rollback ETag: $ETAG"
-          
-          # Check if we have separate origins or single origin
-          ORIGIN_COUNT=$(jq '.DistributionConfig.Origins.Quantity' current-dist-rollback.json)
-          
-          if [ "$ORIGIN_COUNT" -eq 1 ]; then
-            echo "🔧 Single origin setup - reverting origin domain name"
-            
-            # Revert the single origin's domain back to BLUE bucket
-            jq --arg domain "$BLUE_DOMAIN" \
-              '.DistributionConfig.Origins.Items[0].DomainName = $domain' \
-              current-dist-rollback.json | jq '.DistributionConfig' > rollback-config.json
-            
-          else
-            echo "🔧 Multiple origin setup - switching behavior back to BLUE"
-            
-            # Find BLUE origin ID
-            BLUE_ORIGIN_ID=$(jq -r --arg domain "$BLUE_DOMAIN" \
-              '.DistributionConfig.Origins.Items[] | select(.DomainName == $domain) | .Id' \
-              current-dist-rollback.json)
-            
-            if [ -z "$BLUE_ORIGIN_ID" ]; then
-              echo "❌ ERROR: Cannot find BLUE origin for rollback!"
-              exit 1
-            fi
-            
-            echo "🎯 Rolling back to Blue Origin ID: $BLUE_ORIGIN_ID"
-            
-            # Update default cache behavior to point back to BLUE origin
-            jq --arg blue_id "$BLUE_ORIGIN_ID" \
-              '.DistributionConfig.DefaultCacheBehavior.TargetOriginId = $blue_id' \
-              current-dist-rollback.json | jq '.DistributionConfig' > rollback-config.json
-          fi
-          
-          # Apply rollback
+          # Re-fetch fresh config (ETag may have changed)
+          aws cloudfront get-distribution-config --id "$DIST_ID" > rollback.json
+          ETAG=$(jq -r .ETag rollback.json)
+
+          # Restore the *original* origin we recorded in step 5
+          jq --arg id "${{ steps.cf_config.outputs.current_origin }}" \
+            '.DistributionConfig.DefaultCacheBehavior.TargetOriginId = $id' rollback.json \
+            > rollback-updated.json
+
           aws cloudfront update-distribution \
-            --id $DISTRIBUTION_ID \
-            --distribution-config file://rollback-config.json \
-            --if-match $ETAG
-          
-          echo "🔄 Creating invalidation for rollback..."
-          
-          # Invalidate cache to ensure old version is served
+            --id "$DIST_ID" \
+            --distribution-config file://rollback-updated.json \
+            --if-match "$ETAG"
+
+          # Invalidate again so users get the old version immediately
           aws cloudfront create-invalidation \
-            --distribution-id $DISTRIBUTION_ID \
-            --paths "/*"
-          
-          echo "✅ Rollback complete - CloudFront pointing back to BLUE bucket"
-          echo "🚨 Deployment FAILED and was rolled back!"
-          exit 1
-      
-      # Deployment successful
+            --distribution-id "$DIST_ID" --paths "/*"
+
+          echo "Rolled back to origin ${{ steps.cf_config.outputs.current_origin }}"
+
+      # ------------------------------------------------------------------
+      # 9. Success message
+      # ------------------------------------------------------------------
       - name: Deployment Success
-        if: steps.health_check.outputs.status == 'success'
+        if: steps.health.outputs.status == 'ok'
         run: |
-          echo "🎉 Deployment completed successfully!"
-          echo "✅ GREEN bucket is now serving production traffic"
-          echo "💡 Previous version still available in BLUE bucket: ${{ secrets.S3_BUCKET_NAME }}"
+          echo "Deployment succeeded!"
+          echo "Production now served from ${{ steps.switch.outputs.new_origin_id == steps.cf_config.outputs.current_origin && 'BLUE' || 'GREEN' }} bucket"
