@@ -25,6 +25,48 @@ jobs:
         with:
           node-version: '25'
       
+      - name: Validate Required Secrets
+        run: |
+          echo "🔍 Validating required secrets..."
+          
+          MISSING_SECRETS=()
+          
+          if [ -z "${{ secrets.S3_BUCKET_NAME_NEW }}" ]; then
+            MISSING_SECRETS+=("S3_BUCKET_NAME_NEW")
+          fi
+          
+          if [ -z "${{ secrets.S3_BUCKET_NAME }}" ]; then
+            MISSING_SECRETS+=("S3_BUCKET_NAME")
+          fi
+          
+          if [ -z "${{ secrets.AWS_REGION }}" ]; then
+            MISSING_SECRETS+=("AWS_REGION")
+          fi
+          
+          if [ -z "${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}" ]; then
+            MISSING_SECRETS+=("CLOUDFRONT_DISTRIBUTION_ID")
+          fi
+          
+          if [ -z "${{ secrets.CLOUDFRONT_URL }}" ]; then
+            MISSING_SECRETS+=("CLOUDFRONT_URL")
+          fi
+          
+          if [ ${#MISSING_SECRETS[@]} -gt 0 ]; then
+            echo "❌ ERROR: Missing required secrets:"
+            for secret in "${MISSING_SECRETS[@]}"; do
+              echo "  - $secret"
+            done
+            echo ""
+            echo "Please add these secrets in: Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+          
+          echo "✅ All required secrets are configured"
+          echo "📦 Green Bucket (NEW): ${{ secrets.S3_BUCKET_NAME_NEW }}"
+          echo "📦 Blue Bucket (OLD): ${{ secrets.S3_BUCKET_NAME }}"
+          echo "🌍 Region: ${{ secrets.AWS_REGION }}"
+          echo "☁️ CloudFront ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}"
+      
       - name: Install & Build
         run: |
           npm ci
@@ -34,7 +76,15 @@ jobs:
       - name: Deploy to Green S3 Bucket
         run: |
           echo "🟢 Deploying new version to GREEN bucket..."
-          aws s3 sync dist/ s3://${{ secrets.S3_BUCKET_GREEN }} --delete
+          GREEN_BUCKET="${{ secrets.S3_BUCKET_NAME_NEW }}"
+          
+          if [ -z "$GREEN_BUCKET" ]; then
+            echo "❌ ERROR: S3_BUCKET_NAME_NEW secret is not set!"
+            exit 1
+          fi
+          
+          echo "📦 Target bucket: $GREEN_BUCKET"
+          aws s3 sync dist/ s3://${GREEN_BUCKET} --delete
           echo "✅ Deployment to GREEN bucket completed"
       
       # Switch CloudFront behavior to point to GREEN bucket
@@ -44,7 +94,7 @@ jobs:
           echo "🔄 Switching CloudFront origin to GREEN bucket..."
           
           DISTRIBUTION_ID="${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}"
-          GREEN_BUCKET="${{ secrets.S3_BUCKET_GREEN }}"
+          GREEN_BUCKET="${{ secrets.S3_BUCKET_NAME_NEW }}"
           AWS_REGION="${{ secrets.AWS_REGION }}"
           
           # Construct proper S3 domain name
@@ -57,6 +107,8 @@ jobs:
             --id $DISTRIBUTION_ID > current-dist.json
           
           ETAG=$(jq -r '.ETag' current-dist.json)
+          
+          echo "📋 Current ETag: $ETAG"
           
           # Update origin domain to GREEN bucket with proper format
           jq --arg domain "$GREEN_DOMAIN" \
@@ -123,8 +175,13 @@ jobs:
           echo "🔴 ROLLBACK: Health check failed, switching back to BLUE bucket..."
           
           DISTRIBUTION_ID="${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}"
-          BLUE_BUCKET="${{ secrets.S3_BUCKET_BLUE }}"
+          BLUE_BUCKET="${{ secrets.S3_BUCKET_NAME }}"
           AWS_REGION="${{ secrets.AWS_REGION }}"
+          
+          if [ -z "$BLUE_BUCKET" ]; then
+            echo "❌ ERROR: Cannot rollback - S3_BUCKET_NAME secret is not set!"
+            exit 1
+          fi
           
           # Construct proper S3 domain name for BLUE bucket
           BLUE_DOMAIN="${BLUE_BUCKET}.s3.${AWS_REGION}.amazonaws.com"
@@ -136,6 +193,8 @@ jobs:
             --id $DISTRIBUTION_ID > current-dist-rollback.json
           
           ETAG=$(jq -r '.ETag' current-dist-rollback.json)
+          
+          echo "📋 Rollback ETag: $ETAG"
           
           # Revert origin back to BLUE bucket with proper format
           jq --arg domain "$BLUE_DOMAIN" \
@@ -165,4 +224,4 @@ jobs:
         run: |
           echo "🎉 Deployment completed successfully!"
           echo "✅ GREEN bucket is now serving production traffic"
-          echo "💡 Previous version still available in BLUE bucket: ${{ secrets.S3_BUCKET_BLUE }}"
+          echo "💡 Previous version still available in BLUE bucket: ${{ secrets.S3_BUCKET_NAME }}"
