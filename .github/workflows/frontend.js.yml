@@ -57,7 +57,7 @@ jobs:
       # ------------------------------------------------------------
       - name: Deploy to Green S3 Bucket
         env:
-          GREEN_BUCKET: ${{ secrets.S3_BUCKET_NAME }}
+          GREEN_BUCKET: ${{ secrets.S3_BUCKET_NAME_NEW }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
           echo "Deploying build to GREEN bucket: $GREEN_BUCKET"
