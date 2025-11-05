@@ -1,54 +1,151 @@
-name: Deploy React App to S3
+name: Blue-Green Deploy React App to S3
+
 on:
   push:
     branches:
       - master
     paths:
       - 'frontend/**'
+
 jobs:
   deploy:
-    runs-on: self-hosted   # ✅ Self-hosted runner
+    runs-on: self-hosted
     permissions:
       contents: read
     defaults:
       run:
         working-directory: ./frontend
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '25'
+      
       - name: Install & Build
         run: |
           npm ci
           npm run build
-      - name: Deploy to S3
+      
+      # Deploy to GREEN bucket (new version)
+      - name: Deploy to Green S3 Bucket
         run: |
-          aws s3 sync dist/ s3://${{ secrets.S3_BUCKET_NAME }} --delete
+          echo "🟢 Deploying new version to GREEN bucket..."
+          aws s3 sync dist/ s3://${{ secrets.S3_BUCKET_NAME_NEW }} --delete
+          echo "✅ Deployment to GREEN bucket completed"
+      
+      # Switch CloudFront behavior to point to GREEN bucket
+      - name: Switch CloudFront to Green Bucket
+        id: switch_to_green
+        run: |
+          echo "🔄 Switching CloudFront origin to GREEN bucket..."
+          
+          DISTRIBUTION_ID="${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}"
+          GREEN_BUCKET="${{ secrets.S3_BUCKET_GREEN }}"
+          
+          # Get current distribution config and ETag
+          aws cloudfront get-distribution-config \
+            --id $DISTRIBUTION_ID > current-dist.json
+          
+          ETAG=$(jq -r '.ETag' current-dist.json)
+          
+          # Update origin domain to GREEN bucket
+          jq --arg bucket "$GREEN_BUCKET" \
+            '.DistributionConfig.Origins.Items[0].DomainName = ($bucket + ".s3.amazonaws.com")' \
+            current-dist.json | jq '.DistributionConfig' > updated-config.json
+          
+          # Apply the configuration change
+          aws cloudfront update-distribution \
+            --id $DISTRIBUTION_ID \
+            --distribution-config file://updated-config.json \
+            --if-match $ETAG
+          
+          echo "✅ CloudFront now pointing to GREEN bucket"
+      
+      # Invalidate CloudFront cache
       - name: Invalidate CloudFront Cache
         run: |
+          echo "🔄 Creating CloudFront invalidation..."
           aws cloudfront create-invalidation \
             --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
             --paths "/*"
-      - name: Health Check Validation
+          echo "✅ Cache invalidation created"
+      
+      # Health check on CloudFront URL
+      - name: Health Check on CloudFront
+        id: health_check
         run: |
-          echo "⏳ Waiting for CloudFront invalidation to propagate..."
-          sleep 30
+          echo "⏳ Waiting for CloudFront to propagate changes..."
+          sleep 60
           
           CLOUDFRONT_URL="${{ secrets.CLOUDFRONT_URL }}"
-          
           echo "🔍 Performing health check on: $CLOUDFRONT_URL"
           
-          HTTP_STATUS=$(curl -o /dev/null -s -w "%{http_code}" "$CLOUDFRONT_URL")
+          MAX_RETRIES=5
+          RETRY_COUNT=0
           
-          echo "📊 Status Code: $HTTP_STATUS"
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            HTTP_STATUS=$(curl -o /dev/null -s -w "%{http_code}" -L "$CLOUDFRONT_URL")
+            echo "📊 Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES: Status Code: $HTTP_STATUS"
+            
+            if [ "$HTTP_STATUS" -eq 200 ]; then
+              echo "✅ Health check passed! Deployment successful."
+              echo "status=success" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+              echo "⏳ Retrying in 15 seconds..."
+              sleep 15
+            fi
+          done
           
-          if [ "$HTTP_STATUS" -eq 200 ]; then
-            echo "✅ Health check passed! Deployment successful."
-            exit 0
-          else
-            echo "❌ Health check failed! Expected 200, got $HTTP_STATUS"
-            exit 1
-          fi
+          echo "❌ Health check failed after $MAX_RETRIES attempts!"
+          echo "status=failed" >> $GITHUB_OUTPUT
+          exit 1
+      
+      # Rollback: Switch back to BLUE bucket if health check fails
+      - name: Rollback to Blue Bucket
+        if: failure()
+        run: |
+          echo "🔴 ROLLBACK: Health check failed, switching back to BLUE bucket..."
+          
+          DISTRIBUTION_ID="${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}"
+          BLUE_BUCKET="${{ secrets.S3_BUCKET_BLUE }}"
+          
+          # Get current distribution config and ETag
+          aws cloudfront get-distribution-config \
+            --id $DISTRIBUTION_ID > current-dist.json
+          
+          ETAG=$(jq -r '.ETag' current-dist.json)
+          
+          # Revert origin back to BLUE bucket
+          jq --arg bucket "$BLUE_BUCKET" \
+            '.DistributionConfig.Origins.Items[0].DomainName = ($bucket + ".s3.amazonaws.com")' \
+            current-dist.json | jq '.DistributionConfig' > rollback-config.json
+          
+          # Apply rollback
+          aws cloudfront update-distribution \
+            --id $DISTRIBUTION_ID \
+            --distribution-config file://rollback-config.json \
+            --if-match $ETAG
+          
+          # Invalidate cache to ensure old version is served
+          aws cloudfront create-invalidation \
+            --distribution-id $DISTRIBUTION_ID \
+            --paths "/*"
+          
+          echo "✅ Rollback complete - CloudFront pointing back to BLUE bucket"
+          echo "🚨 Deployment FAILED and was rolled back!"
+          exit 1
+      
+      # Deployment successful
+      - name: Deployment Success
+        if: steps.health_check.outputs.status == 'success'
+        run: |
+          echo "🎉 Deployment completed successfully!"
+          echo "✅ GREEN bucket is now serving production traffic"
