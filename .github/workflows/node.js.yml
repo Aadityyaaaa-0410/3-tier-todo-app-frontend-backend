@@ -56,11 +56,6 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Shift ALB Traffic to Green TG + Validate
-        # env:
-        #   LISTENER_ARN: arn:aws:elasticloadbalancing:us-east-1:533267349233:listener/app/app-alb/875bca219355eec1/8712d71e13e00b72
-        #   OLD_TG_ARN: arn:aws:elasticloadbalancing:us-east-1:533267349233:targetgroup/blue-tg/23a0a2721e8f7154
-        #   NEW_TG_ARN: arn:aws:elasticloadbalancing:us-east-1:533267349233:targetgroup/green-tg/31108f255f307107
-        #   ALB_DNS: app-alb-270296790.us-east-1.elb.amazonaws.com
         env:
           LISTENER_ARN: ${{ secrets.LISTENER_ARN }}
           OLD_TG_ARN: ${{ secrets.OLD_TG_ARN }}
