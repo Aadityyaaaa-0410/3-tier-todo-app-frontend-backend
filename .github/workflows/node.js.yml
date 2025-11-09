@@ -1,127 +1,53 @@
-name: Deploy Backend to EC2 via SSM
+name: Deploy to AWS CodeDeploy
 
 on:
   push:
     branches:
-      - master
+      - master  # ← Your branch
     paths:
-      - 'backend/**'
+      - 'backend/**'  # ← Only trigger on backend changes
+  workflow_dispatch:  # ← Manual trigger from GitHub UI
 
 jobs:
   deploy:
     runs-on: self-hosted
+    permissions:
+      contents: read
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Deploy to EC2 (Green Environment) via SSM
+      - name: Trigger CodeDeploy Deployment
+        id: deploy
         run: |
-          echo "Fetching EC2 Instances with tag Name=green..."
+          echo "Triggering CodeDeploy deployment..."
 
-          INSTANCE_IDS=$(aws ssm describe-instance-information \
-            --filters "Key=tag:Name,Values=green" \
-            --query "InstanceInformationList[].InstanceId" \
-            --output text)
+          DEPLOY_ID=$(aws deploy create-deployment \
+            --application-name ${{ secrets.CODEDEPLOY_APPLICATION }} \
+            --deployment-group-name ${{ secrets.CODEDEPLOY_DEPLOYMENT_GROUP }} \
+            --s3-location bucket=code-deployy1143,key=cd.zip,bundleType=zip \
+            --description "GitHub Actions - ${{ github.sha }}" \
+            --query 'deploymentId' --output text)
 
-          if [ -z "$INSTANCE_IDS" ]; then
-            echo "❌ No EC2 instances found with tag Name=green"
-            exit 1
-          fi
+          echo "Deployment ID: $DEPLOY_ID"
+          echo "deployment_id=$DEPLOY_ID" >> $GITHUB_OUTPUT
 
-          for ID in $INSTANCE_IDS; do
-            echo "🚀 Deploying code to instance: $ID"
+          echo "CodeDeploy deployment triggered successfully!"
 
-            aws ssm send-command \
-              --instance-ids "$ID" \
-              --document-name "AWS-RunShellScript" \
-              --comment "Fresh clone and restart PM2 backend server" \
-              --parameters commands='[
-                "sudo -u ubuntu bash -c '\''cd /home/ubuntu; \
-                rm -rf 3-tier-todo-app-frontend-backend; \
-                git clone https://github.com/Aadityyaaaa-0410/3-tier-todo-app-frontend-backend.git; \
-                cd 3-tier-todo-app-frontend-backend/backend; \
-                npm install; \
-                pm2 describe server > /dev/null 2>&1 && pm2 reload server || pm2 start server.js --name server; \
-                pm2 save'\''"
-              ]' \
-              --region us-east-1
-
-            echo "✅ Command sent to $ID"
-          done
-
-          echo "🎉 Deployment command sent to all GREEN EC2 instances!"
-
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Shift ALB Traffic to Green TG + Validate
-        env:
-          LISTENER_ARN: ${{ secrets.LISTENER_ARN }}
-          OLD_TG_ARN: ${{ secrets.OLD_TG_ARN }}
-          NEW_TG_ARN: ${{ secrets.NEW_TG_ARN }}
-          ALB_DNS: ${{ secrets.ALB_DNS }}
+      # ──────────────────────────────
+      # OPTIONAL: Wait for Success
+      # ──────────────────────────────
+      - name: Wait for CodeDeploy Success
+        if: success()
         run: |
-          set -e
+          echo "Waiting for CodeDeploy to complete..."
+          aws deploy wait deployment-successful --deployment-id ${{ steps.deploy.outputs.deployment_id }}
+          echo "Deployment succeeded!"
 
-          echo "Shifting traffic → GREEN:100 | BLUE:0"
-
-          aws elbv2 modify-listener \
-            --listener-arn "$LISTENER_ARN" \
-            --default-actions '[
-              {
-                "Type": "forward",
-                "ForwardConfig": {
-                  "TargetGroups": [
-                    { "TargetGroupArn": "'"$NEW_TG_ARN"'", "Weight": 100 },
-                    { "TargetGroupArn": "'"$OLD_TG_ARN"'", "Weight": 0 }
-                  ]
-                }
-              }
-            ]' > /dev/null
-
-          echo "⏳ Waiting 30s to allow traffic routing..."
-          sleep 30
-
-          HEALTH_URL="https://$ALB_DNS/health"
-          echo "🔍 Checking /health endpoint..."
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL")
-
-          echo "🔍 Checking green-tg health status..."
-          HEALTHY_COUNT=$(aws elbv2 describe-target-health \
-            --target-group-arn "$NEW_TG_ARN" \
-            --query "TargetHealthDescriptions[?TargetHealth.State=='healthy'].Target.Id" \
-            --output json | jq length)
-
-          TOTAL_COUNT=$(aws elbv2 describe-target-health \
-            --target-group-arn "$NEW_TG_ARN" \
-            --query "length(TargetHealthDescriptions[])" --output text)
-
-          if [[ "$HTTP_STATUS" -eq 200 && "$HEALTHY_COUNT" -eq "$TOTAL_COUNT" && "$TOTAL_COUNT" -gt 0 ]]; then
-            echo "✅ SUCCESS: Deployment validated!"
-            echo "  /health → $HTTP_STATUS"
-            echo "  TG Health → $HEALTHY_COUNT/$TOTAL_COUNT targets healthy"
-          else
-            echo "❌ VALIDATION FAILED!"
-            echo "  /health → $HTTP_STATUS"
-            echo "  TG Health → $HEALTHY_COUNT/$TOTAL_COUNT healthy"
-
-            echo "♻️ ROLLING BACK → BLUE:100 | GREEN:0"
-
-            aws elbv2 modify-listener \
-              --listener-arn "$LISTENER_ARN" \
-              --default-actions '[
-                {
-                  "Type": "forward",
-                  "ForwardConfig": {
-                    "TargetGroups": [
-                      { "TargetGroupArn": "'"$NEW_TG_ARN"'", "Weight": 0 },
-                      { "TargetGroupArn": "'"$OLD_TG_ARN"'", "Weight": 100 }
-                    ]
-                  }
-                }
-              ]' > /dev/null
-
-            echo "🔁 Rollback done."
-            exit 1
-          fi
+      # ──────────────────────────────
+      # OPTIONAL: On Failure
+      # ──────────────────────────────
+      - name: Deployment Failed
+        if: failure()
+        run: |
+          echo "Deployment failed or timed out!"
+          echo "Check CodeDeploy console: https://console.aws.amazon.com/codedeploy/home#/deployments/${{ steps.deploy.outputs.deployment_id }}"
+          exit 1
