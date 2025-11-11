@@ -1,0 +1,21 @@
+version: 0.0
+os: linux
+files:
+  - source: .
+    destination: /home/ubuntu/backend
+
+hooks:
+  BeforeInstall:
+    - location: scripts/install_docker.sh
+      timeout: 300
+      runas: ubuntu
+
+  AfterInstall:
+    - location: scripts/run_compose.sh
+      timeout: 300
+      runas: ubuntu
+
+  ApplicationStart:
+    - location: scripts/validate_app.sh
+      timeout: 120
+      runas: ubuntu
