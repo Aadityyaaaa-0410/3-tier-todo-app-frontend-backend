@@ -1,0 +1,76 @@
+version: "3.9"
+
+services:
+  nginx:
+    build: ./nginx
+    image: nginx-custom
+    container_name: nginx-cont
+    ports:
+      - "80:80"
+    restart: always
+    networks:
+      - net-app
+    depends_on:
+      node:
+        condition: service_healthy
+
+  node:
+    build: .
+    image: node-custom
+    container_name: node_app
+    ports:
+      - "5000:5000"
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - net-app
+    volumes:
+      - ./mysql-data:/var/lib/mysql
+      - ./node-logs:/app/logs  # Persist logs locally
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  cadvisor:
+     image: gcr.io/cadvisor/cadvisor:latest
+     container_name: cadvisor
+     restart: always
+     ports:
+       - "8080:8080"
+     volumes:
+       - /:/rootfs:ro
+       - /var/run:/var/run:rw
+       - /sys:/sys:ro
+       - /var/lib/docker/:/var/lib/docker:ro
+     networks:
+       - net-app
+     depends_on:
+       - node
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: promtail
+    restart: always
+    volumes:
+      - /etc/promtail/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
+#      - ./node-logs:/var/log/node:ro   # Only node_app logs
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock   # required for container discovery
+    command:
+      - "-config.file=/etc/promtail/promtail-config.yaml"
+    networks:
+      - net-app
+    depends_on:
+      - node
+
+
+networks:
+  net-app:
+    driver: bridge
