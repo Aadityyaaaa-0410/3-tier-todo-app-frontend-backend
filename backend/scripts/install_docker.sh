@@ -1,30 +1,24 @@
 #!/bin/bash
 set -e
 
-sudo -u ubuntu bash 
+echo "=== Checking Docker and Docker Compose Installation ==="
 
-echo "=== Installing Docker and Docker Compose ==="
-
-# Install Docker if not present
-if ! command -v docker &> /dev/null
+# Check Docker
+if command -v docker &> /dev/null
 then
-  sudo apt update -y
-  sudo apt install docker.io -y
-  sudo usermod -aG docker $USER
-  sudo newgrp docker
-  sudo -u ubuntu bash 
-  sudo systemctl start docker
-  sudo systemctl enable docker
+  echo "✅ Docker is installed: $(docker --version)"
 else
-  echo "Docker already installed"
+  echo "❌ Docker is NOT installed. Exiting..."
+  exit 1
 fi
 
-# Install Docker Compose if not present
-if ! command -v docker-compose &> /dev/null
+# Check Docker Compose
+if command -v docker-compose &> /dev/null
 then
-  echo "Installing Docker Compose..."
-  sudo apt install docker-compose -y
+  echo "✅ Docker Compose is installed: $(docker-compose --version)"
 else
-  echo "Docker Compose already installed"
+  echo "❌ Docker Compose is NOT installed. Exiting..."
+  exit 1
 fi
 
+echo "✅ All required tools are installed."
