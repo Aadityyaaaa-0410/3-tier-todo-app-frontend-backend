@@ -15,7 +15,7 @@ fi
 # Check Docker Compose
 if command -v docker-compose &> /dev/null
 then
-  echo "✅ Docker Compose is installed: $(docker-compose --version)"
+  echo "✅ Docker Compose is installed: $(docker-compose -v)"
 else
   echo "❌ Docker Compose is NOT installed. Exiting..."
   exit 1
