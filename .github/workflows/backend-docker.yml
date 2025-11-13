@@ -30,17 +30,17 @@ jobs:
         run: |
           echo "Logging in to Amazon ECR..."
           aws ecr get-login-password --region $AWS_REGION \
-            | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
+            | sudo docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
 
           echo "Building Docker image..."
           cd backend
-          docker build -t fullstack-project .
+          sudo docker build -t fullstack-project .
 
           echo "Tagging image..."
-          docker tag fullstack-project:latest ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+          sudo docker tag fullstack-project:latest ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
 
           echo "Pushing image to ECR..."
-          docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+          sudo docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
 
           echo "✅ Docker image pushed successfully!"
 
@@ -90,6 +90,18 @@ jobs:
           echo "Waiting for CodeDeploy deployment to complete..."
           aws deploy wait deployment-successful --deployment-id "${{ steps.deploy.outputs.deployment_id }}"
           echo "✅ Deployment succeeded!"
+
+      # ──────────────────────────────
+      # CLEANUP DOCKER IMAGES
+      # ──────────────────────────────
+      - name: Clean up Docker images
+        if: always()
+        run: |
+          echo "Cleaning up local Docker images..."
+          sudo docker rmi fullstack-project:latest || true
+          sudo docker rmi ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest || true
+          sudo docker image prune -f || true
+          echo "✅ Cleanup complete"
 
       # ──────────────────────────────
       # HANDLE FAILURES
