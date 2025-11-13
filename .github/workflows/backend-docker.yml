@@ -36,7 +36,6 @@ jobs:
       # ──────────────────────────────
       - name: Build and Push Docker Image to ECR
         run: |
-          sudo -u ubuntu bash
            
           echo "Logging in to Amazon ECR..."
           aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
