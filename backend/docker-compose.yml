@@ -15,7 +15,8 @@ services:
         condition: service_healthy
 
   node:
-    image: 533267349233.dkr.ecr.us-east-1.amazonaws.com/fullstack-project:latest
+    build: .
+    image: node-custom
     container_name: node_app
     ports:
       - "5000:5000"
