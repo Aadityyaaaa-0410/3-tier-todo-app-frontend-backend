@@ -24,17 +24,6 @@ jobs:
         uses: actions/checkout@v4
 
       # ──────────────────────────────
-      # CREATE DEPLOYMENT PACKAGE
-      # ──────────────────────────────
-      - name: Create Deployment Package
-        run: |
-          echo "Creating deployment package..."
-          cd backend
-          cd ..
-          zip -r cd.zip backend
-          echo "✅ Zip package created: cd.zip"
-
-      # ──────────────────────────────
       # BUILD & PUSH DOCKER IMAGE TO ECR
       # ──────────────────────────────
       - name: Build and Push Docker Image to ECR
@@ -45,15 +34,26 @@ jobs:
 
           echo "Building Docker image..."
           cd backend
-          sudo docker build -t fullstack-project .
+          docker build -t fullstack-project .
 
           echo "Tagging image..."
-          sudo docker tag fullstack-project:latest ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+          docker tag fullstack-project:latest ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
 
           echo "Pushing image to ECR..."
-          sudo docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+          docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
 
           echo "✅ Docker image pushed successfully!"
+
+      # ──────────────────────────────
+      # CREATE DEPLOYMENT PACKAGE
+      # ──────────────────────────────
+      - name: Create Deployment Package
+        run: |
+          echo "Creating deployment package..."
+          cd backend
+          cd ..
+          zip -r cd.zip backend
+          echo "✅ Zip package created: cd.zip"
 
       # ──────────────────────────────
       # UPLOAD ZIP TO S3
