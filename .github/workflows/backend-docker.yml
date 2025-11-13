@@ -13,9 +13,12 @@ jobs:
     permissions:
       contents: read
 
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+
     steps:
       # ──────────────────────────────
-      # CHECKOUT REPO
+      # CHECKOUT REPOSITORY
       # ──────────────────────────────
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -36,20 +39,19 @@ jobs:
       # ──────────────────────────────
       - name: Build and Push Docker Image to ECR
         run: |
-           
           echo "Logging in to Amazon ECR..."
-          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
+          aws ecr get-login-password --region $AWS_REGION \
             | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
 
           echo "Building Docker image..."
           cd backend
-          sudo docker build -t fullstack-project .
+          docker build -t fullstack-project .
 
           echo "Tagging image..."
-          sudo docker tag ${{ secrets.ECR_REPOSITORY }}:latest ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+          docker tag fullstack-project:latest ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
 
           echo "Pushing image to ECR..."
-          sudo docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+          docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
 
           echo "✅ Docker image pushed successfully!"
 
