@@ -3,7 +3,7 @@ name: Deploy Backend via CodeDeploy
 on:
   push:
     branches:
-      - master   # Trigger only when backend branch is pushed
+      - master
     paths:
       - 'backend/**'
 
@@ -14,9 +14,15 @@ jobs:
       contents: read
 
     steps:
+      # ──────────────────────────────
+      # CHECKOUT REPO
+      # ──────────────────────────────
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # ──────────────────────────────
+      # CREATE DEPLOYMENT PACKAGE
+      # ──────────────────────────────
       - name: Create Deployment Package
         run: |
           echo "Creating deployment package..."
@@ -25,12 +31,38 @@ jobs:
           zip -r cd.zip backend
           echo "✅ Zip package created: cd.zip"
 
+      # ──────────────────────────────
+      # BUILD & PUSH DOCKER IMAGE TO ECR
+      # ──────────────────────────────
+      - name: Build and Push Docker Image to ECR
+        run: |
+          echo "Logging in to Amazon ECR..."
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
+            | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
+
+          echo "Building Docker image..."
+          docker build -t ${{ secrets.ECR_REPOSITORY }} ./backend
+
+          echo "Tagging image..."
+          docker tag ${{ secrets.ECR_REPOSITORY }}:latest ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+
+          echo "Pushing image to ECR..."
+          docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+
+          echo "✅ Docker image pushed successfully!"
+
+      # ──────────────────────────────
+      # UPLOAD ZIP TO S3
+      # ──────────────────────────────
       - name: Upload Artifact to S3
         run: |
           echo "Uploading cd.zip to S3..."
           aws s3 cp cd.zip s3://${{ secrets.S3_BUCKET_NAME }}/cd.zip
           echo "✅ Upload complete."
 
+      # ──────────────────────────────
+      # TRIGGER CODEDEPLOY DEPLOYMENT
+      # ──────────────────────────────
       - name: Trigger CodeDeploy Deployment
         id: deploy
         run: |
@@ -45,6 +77,9 @@ jobs:
           echo "Deployment ID: $DEPLOY_ID"
           echo "deployment_id=$DEPLOY_ID" >> $GITHUB_OUTPUT
 
+      # ──────────────────────────────
+      # WAIT FOR DEPLOYMENT SUCCESS
+      # ──────────────────────────────
       - name: Wait for CodeDeploy Success
         if: success()
         run: |
@@ -52,7 +87,9 @@ jobs:
           aws deploy wait deployment-successful --deployment-id "${{ steps.deploy.outputs.deployment_id }}"
           echo "✅ Deployment succeeded!"
 
-
+      # ──────────────────────────────
+      # HANDLE FAILURES
+      # ──────────────────────────────
       - name: Deployment Failed
         if: failure()
         run: |
