@@ -2,7 +2,8 @@ version: "3.9"
 
 services:
   nginx:
-    image: 533267349233.dkr.ecr.us-east-1.amazonaws.com/fullstack-project:latest
+    build: ./nginx
+    image: nginx-custom
     container_name: nginx-cont
     ports:
       - "80:80"
@@ -14,8 +15,7 @@ services:
         condition: service_healthy
 
   node:
-    build: .
-    image: node-custom
+    image: 533267349233.dkr.ecr.us-east-1.amazonaws.com/fullstack-project:latest
     container_name: node_app
     ports:
       - "5000:5000"
