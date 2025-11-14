@@ -28,9 +28,9 @@ jobs:
       # ──────────────────────────────
       - name: Build and Push Docker Image to ECR
         run: |
-          # echo "Logging in to Amazon ECR..."
-          # aws ecr get-login-password --region $AWS_REGION \
-          #   | sudo docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
+          echo "Logging in to Amazon ECR..."
+          aws ecr get-login-password --region $AWS_REGION \
+            | sudo docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
 
           echo "Building Docker image..."
           cd backend
