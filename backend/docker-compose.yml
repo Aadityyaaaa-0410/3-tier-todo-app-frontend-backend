@@ -28,9 +28,6 @@ services:
       start_period: 20s
     networks:
       - net-app
-    volumes:
-      - ./mysql-data:/var/lib/mysql
-      - ./node-logs:/app/logs  # Persist logs locally
     logging:
       driver: "json-file"
       options:
@@ -59,7 +56,6 @@ services:
     restart: always
     volumes:
       - /etc/promtail/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
-#      - ./node-logs:/var/log/node:ro   # Only node_app logs
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock   # required for container discovery
     command:
