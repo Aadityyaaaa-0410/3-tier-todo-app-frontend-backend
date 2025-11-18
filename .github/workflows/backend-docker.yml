@@ -61,7 +61,7 @@ jobs:
       - name: Upload Artifact to S3
         run: |
           echo "Uploading cd.zip to S3..."
-          aws s3 cp cd.zip s3://${{ secrets.S3_BUCKET_NAME }}/cd.zip
+          aws s3 cp cd.zip s3://${{ secrets.S3_BUCKET_NAME_BACK }}/cd.zip
           echo "✅ Upload complete."
 
       # ──────────────────────────────
