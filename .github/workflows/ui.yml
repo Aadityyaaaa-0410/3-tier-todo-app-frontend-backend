@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   deploy:
-    runs-on: self-hosted   # Self-hosted runner
+    runs-on: ubuntu-latest   # GitHub-hosted runner
     
     defaults:
       run:
