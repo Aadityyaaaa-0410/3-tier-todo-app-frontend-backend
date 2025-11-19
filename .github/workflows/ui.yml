@@ -41,7 +41,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: frontend
-        run: npm install --legacy-peer-deps
+        run: npm install
 
       - name: Build React app
         working-directory: frontend
@@ -52,7 +52,7 @@ jobs:
       # ------------------------
       - name: Sync build to S3
         run: |
-          aws s3 sync ./frontend/build s3://${{ secrets.S3_BUCKET }}/ --delete
+          aws s3 sync ./dist s3://${{ secrets.S3_BUCKET }}/ --delete
 
       # ------------------------
       # 5. CloudFront Invalidation
