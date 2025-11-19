@@ -81,7 +81,7 @@ function App() {
     <div className="w-screen h-screen bg-gradient-to-br from-indigo-400 to-purple-500 flex justify-center items-center">
       <div className="bg-white rounded-2xl shadow-2xl p-10 max-w-lg w-11/12 sm:w-full">
         <h1 className="text-4xl font-bold text-gray-800 text-center mb-6">
-          Todo Application
+          Todo Application new
         </h1>
         <TodoInput addTodo={addTodo} />
         {loading ? (
