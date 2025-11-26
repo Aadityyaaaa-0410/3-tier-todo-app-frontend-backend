@@ -1,124 +1,124 @@
-name: Deploy Backend via CodeDeploy
+# name: Deploy Backend via CodeDeploy
 
-on:
-  push:
-    branches:
-      - master
-    paths:
-      - 'backend/**'
+# on:
+#   push:
+#     branches:
+#       - master
+#     paths:
+#       - 'backend/**'
 
-permissions:
-  id-token: write       # For OIDC
-  contents: read
+# permissions:
+#   id-token: write       # For OIDC
+#   contents: read
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
+# jobs:
+#   deploy:
+#     runs-on: ubuntu-latest
 
-    env:
-      AWS_REGION: ${{ secrets.AWS_REGION }}
+#     env:
+#       AWS_REGION: ${{ secrets.AWS_REGION }}
 
-    steps:
-      # ------------------------
-      # 1. Checkout Repository
-      # ------------------------
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+#     steps:
+#       # ------------------------
+#       # 1. Checkout Repository
+#       # ------------------------
+#       - name: Checkout Repository
+#         uses: actions/checkout@v4
 
-      # ------------------------
-      # 2. Configure AWS via OIDC
-      # ------------------------
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
+#       # ------------------------
+#       # 2. Configure AWS via OIDC
+#       # ------------------------
+#       - name: Configure AWS credentials (OIDC)
+#         uses: aws-actions/configure-aws-credentials@v4
+#         with:
+#           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+#           aws-region: ${{ secrets.AWS_REGION }}
 
-      # ------------------------
-      # 3. Build & Push Docker Image to ECR
-      # ------------------------
-      - name: Build and Push Docker Image
-        run: |
-          echo "Logging in to Amazon ECR..."
-          aws ecr get-login-password --region $AWS_REGION \
-            | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
+#       # ------------------------
+#       # 3. Build & Push Docker Image to ECR
+#       # ------------------------
+#       - name: Build and Push Docker Image
+#         run: |
+#           echo "Logging in to Amazon ECR..."
+#           aws ecr get-login-password --region $AWS_REGION \
+#             | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
 
-          echo "Building Docker image..."
-          cd backend
-          docker build -t fullstack-project .
+#           echo "Building Docker image..."
+#           cd backend
+#           docker build -t fullstack-project .
 
-          echo "Tagging image..."
-          docker tag fullstack-project:latest ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+#           echo "Tagging image..."
+#           docker tag fullstack-project:latest ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
 
-          echo "Pushing image to ECR..."
-          docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+#           echo "Pushing image to ECR..."
+#           docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
 
-          echo "✅ Docker image pushed successfully!"
+#           echo "✅ Docker image pushed successfully!"
 
-      # ------------------------
-      # 4. Create Deployment Package (Zip)
-      # ------------------------
-      - name: Create Deployment Package
-        run: |
-          cd backend
-          cd ..
-          zip -r cd.zip backend
-          echo "✅ Deployment package created: cd.zip"
+#       # ------------------------
+#       # 4. Create Deployment Package (Zip)
+#       # ------------------------
+#       - name: Create Deployment Package
+#         run: |
+#           cd backend
+#           cd ..
+#           zip -r cd.zip backend
+#           echo "✅ Deployment package created: cd.zip"
 
-      # ------------------------
-      # 5. Upload Zip to S3
-      # ------------------------
-      - name: Upload Artifact to S3
-        run: |
-          aws s3 cp cd.zip s3://${{ secrets.S3_BUCKET_NAME_BACK }}/cd.zip
-          echo "✅ Upload complete."
+#       # ------------------------
+#       # 5. Upload Zip to S3
+#       # ------------------------
+#       - name: Upload Artifact to S3
+#         run: |
+#           aws s3 cp cd.zip s3://${{ secrets.S3_BUCKET_NAME_BACK }}/cd.zip
+#           echo "✅ Upload complete."
 
-      # ------------------------
-      # 6. Trigger CodeDeploy Deployment
-      # ------------------------
-      - name: Trigger CodeDeploy Deployment
-        id: deploy
-        run: |
-          echo "Triggering AWS CodeDeploy deployment..."
-          DEPLOY_ID=$(aws deploy create-deployment \
-            --application-name "${{ secrets.CODEDEPLOY_APPLICATION }}" \
-            --deployment-group-name "${{ secrets.CODEDEPLOY_DEPLOYMENT_GROUP }}" \
-            --s3-location bucket=${{ secrets.S3_BUCKET_NAME_BACK }},key=cd.zip,bundleType=zip \
-            --description "Deployment from GitHub Actions - ${{ github.sha }}" \
-            --query 'deploymentId' --output text)
+#       # ------------------------
+#       # 6. Trigger CodeDeploy Deployment
+#       # ------------------------
+#       - name: Trigger CodeDeploy Deployment
+#         id: deploy
+#         run: |
+#           echo "Triggering AWS CodeDeploy deployment..."
+#           DEPLOY_ID=$(aws deploy create-deployment \
+#             --application-name "${{ secrets.CODEDEPLOY_APPLICATION }}" \
+#             --deployment-group-name "${{ secrets.CODEDEPLOY_DEPLOYMENT_GROUP }}" \
+#             --s3-location bucket=${{ secrets.S3_BUCKET_NAME_BACK }},key=cd.zip,bundleType=zip \
+#             --description "Deployment from GitHub Actions - ${{ github.sha }}" \
+#             --query 'deploymentId' --output text)
 
-          echo "Deployment ID: $DEPLOY_ID"
-          echo "deployment_id=$DEPLOY_ID" >> $GITHUB_OUTPUT
+#           echo "Deployment ID: $DEPLOY_ID"
+#           echo "deployment_id=$DEPLOY_ID" >> $GITHUB_OUTPUT
 
-      # ------------------------
-      # 7. Wait for Deployment Success
-      # ------------------------
-      - name: Wait for CodeDeploy Success
-        if: success()
-        run: |
-          echo "Waiting for CodeDeploy deployment to complete..."
-          aws deploy wait deployment-successful --deployment-id "${{ steps.deploy.outputs.deployment_id }}"
-          echo "✅ Deployment succeeded!"
+#       # ------------------------
+#       # 7. Wait for Deployment Success
+#       # ------------------------
+#       - name: Wait for CodeDeploy Success
+#         if: success()
+#         run: |
+#           echo "Waiting for CodeDeploy deployment to complete..."
+#           aws deploy wait deployment-successful --deployment-id "${{ steps.deploy.outputs.deployment_id }}"
+#           echo "✅ Deployment succeeded!"
 
-      # ------------------------
-      # 8. Clean up Docker Images
-      # ------------------------
-      - name: Clean up Docker images
-        if: always()
-        run: |
-          echo "Cleaning up local Docker images..."
-          docker rmi fullstack-project:latest || true
-          docker rmi ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest || true
-          docker image prune -f || true
-          echo "✅ Cleanup complete"
+#       # ------------------------
+#       # 8. Clean up Docker Images
+#       # ------------------------
+#       - name: Clean up Docker images
+#         if: always()
+#         run: |
+#           echo "Cleaning up local Docker images..."
+#           docker rmi fullstack-project:latest || true
+#           docker rmi ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest || true
+#           docker image prune -f || true
+#           echo "✅ Cleanup complete"
 
-      # ------------------------
-      # 9. Handle Failures
-      # ------------------------
-      - name: Deployment Failed
-        if: failure()
-        run: |
-          echo "❌ Deployment failed or timed out!"
-          echo "Check CodeDeploy console:"
-          echo "https://console.aws.amazon.com/codedeploy/home#/deployments/${{ steps.deploy.outputs.deployment_id }}"
-          exit 1
+#       # ------------------------
+#       # 9. Handle Failures
+#       # ------------------------
+#       - name: Deployment Failed
+#         if: failure()
+#         run: |
+#           echo "❌ Deployment failed or timed out!"
+#           echo "Check CodeDeploy console:"
+#           echo "https://console.aws.amazon.com/codedeploy/home#/deployments/${{ steps.deploy.outputs.deployment_id }}"
+#           exit 1
